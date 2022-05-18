@@ -1,0 +1,265 @@
+---
+title: "Milestone4"
+output: html_document
+---
+```{r message=FALSE,warning=FALSE}
+library(knitr)
+library(tidyverse)
+library(maps)
+library(lubridate)
+library(mapdata)
+library(tsibble)
+library(scales)
+library("feasts")
+library("fpp2")
+library("tsibbledata")
+library(zoo)
+library(ggpmisc)
+th <- theme_minimal() + 
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "#f7f7f7"),
+    panel.border = element_rect(fill = NA, color = "#0c0c0c", size = 0.6),
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    legend.position = "bottom"
+  )
+theme_set(th)
+```
+
+
+```{r}
+prison_pop = read_csv("prison_pop.csv")
+staff_pop = read_csv("staff_pop.csv")
+prison_staff_counts = read_csv("prison_staff_counts.csv")
+covid_prison_cases = read_csv("covid_prison_cases.csv")
+national_covidData = read_csv("national_covidData.csv")
+```
+
+```{r}
+prison_pop %>% 
+  mutate(month = match(month, month.abb)) %>% 
+  group_by(year, month) %>% 
+  summarize(prison_pop = sum(prisoner_pop)) %>% 
+  mutate(date = as.yearmon(paste(year,month, sep = "-"))) %>% 
+  ggplot() +
+  geom_bar(aes(date, prison_pop),fill= "pink",stat="identity") +
+  scale_y_continuous(labels = comma) +
+  ylab("Prisoner Population") +
+  xlab("Date") +
+  ggtitle("Prisoner Population during and after COVID 19") +
+  theme_classic()
+```
+
+
+```{r, fig.width = 7}
+national_covidData %>% 
+  group_by(date) %>% 
+  mutate(date = yearmonth(date)) %>%
+  summarize(new_death = sum(deathIncrease),
+            cases_added = sum(positiveIncrease)) %>% 
+  mutate(cases_added2 = cases_added / 50) %>% 
+  ggplot()+
+  geom_line(aes(date, cases_added2, color = '1:50 Scaled New Infection Cases per Day'))+
+  geom_line(aes(date, new_death, color = 'New Death Cases per Day'))+
+  stat_peaks(geom = 'text', aes(date, cases_added2), span = 3, size = 3, hjust = 0.5, vjust = -1)+
+  stat_peaks(geom = 'point', aes(date, cases_added2), span = 3)+
+  stat_peaks(geom = 'text', aes(date, new_death), span = 3, size = 3, hjust = 0.5, vjust = -1)+
+  stat_peaks(geom = 'point', aes(date, new_death), span = 3)+
+  scale_color_manual(values = c(
+    '1:50 Scaled New Infection Cases per Day' = 'blue',
+    'New Death Cases per Day' = 'red')) +
+  labs(color = 'Statistic')+
+  theme_classic()+
+  ylab("Count")+
+  xlab("Date")+
+  ggtitle("COVID 19 National Statistics Shape Comparison")+
+  theme(legend.position = "bottom")
+```
+
+```{r, fig.width = 7}
+covid_prison_cases_ = covid_prison_cases %>%
+  drop_na(total_prisoner_cases)%>%
+  mutate(Month = month(mdy(as_of_date), label = TRUE))%>%
+  mutate(Year = year(mdy(as_of_date)))%>%
+  mutate(x = paste(Month, Year)) %>%
+  group_by(x)%>%
+  mutate(prisoners_recovered = ifelse(is.na(prisoners_recovered), 0, prisoners_recovered)) %>% 
+  mutate(total_prisoner_deaths = ifelse(is.na(total_prisoner_deaths), 0, total_prisoner_deaths)) %>% 
+  mutate(net_cases = total_prisoner_cases - prisoners_recovered - total_prisoner_deaths) %>% 
+  summarise(n = sum(net_cases),
+            n2 = sum(total_prisoner_deaths))
+
+covid_prison_cases_ = covid_prison_cases_ %>%
+  mutate(Month = yearmonth(x)) %>% 
+  mutate(n = n * 1/35)
+
+covid_prison_cases_ %>%
+  ggplot() +
+  geom_line(aes(Month, n, color = '1:35 Scaled New Infection Cases per Day'))+
+  geom_line(aes(Month, n2, color = 'New Death Cases per Day'))+
+  stat_peaks(geom = 'text', aes(Month, n), span = 3, size = 3, hjust = 0.5, vjust = -1)+
+  stat_peaks(geom = 'point', aes(Month, n), span = 3)+
+  stat_peaks(geom = 'text', aes(Month, n2), span = 3, size = 3, hjust = 0.5, vjust = -1)+
+  stat_peaks(geom = 'point', aes(Month, n2), span = 3)+
+  scale_color_manual(values = c(
+    '1:35 Scaled New Infection Cases per Day' = 'blue',
+    'New Death Cases per Day' = 'red')) +
+  labs(color = 'Statistic')+
+  theme_classic()+
+  ylab("Count")+
+  xlab("Date")+
+  ggtitle("COVID 19 Prison Statistics Shape Comparison")+
+  theme(legend.position = "bottom")
+  
+```
+
+This is a graph of the sum of people in prison by state per capita. 
+```{r}
+state <- map_data("state")
+```
+
+```{r}
+prison_state = prison_pop %>%
+  group_by(name)%>%
+  summarise(n = sum(prisoner_pop))
+```
+
+```{r}
+us_states <- map_data("state")
+prison_state$region <- tolower(prison_state$name)
+prison_state_map <- left_join(us_states, prison_state)
+
+```
+
+```{r}
+StatePopulation <- read.csv("https://raw.githubusercontent.com/ds4stats/r-tutorials/master/intro-maps/data/StatePopulation.csv", as.is = TRUE)
+
+MergedStates <- inner_join(prison_state_map, StatePopulation, by = "region")
+```
+
+```{r}
+ggplot(data = MergedStates,
+            aes(x = long, y = lat,
+                group = group, fill = n/population))+
+  geom_polygon(color = "gray90", size = 0.1) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.x = element_blank()) +
+  labs(title="Prisoner population per capita") +
+  theme(legend.title=element_blank())+
+  coord_map()+
+  scale_fill_viridis_c(option = "A")
+```
+
+
+
+
+```{r}
+state <- map_data("state")
+```
+
+```{r}
+covid_prison_cases_state = covid_prison_cases %>%
+  drop_na(total_prisoner_cases)%>%
+  group_by(name)%>%
+  summarise(n = sum(total_prisoner_cases))
+```
+
+```{r}
+us_states <- map_data("state")
+covid_prison_cases_state$region <- tolower(covid_prison_cases_state$name)
+covid_prison_cases_state_map <- left_join(us_states, covid_prison_cases_state)
+```
+
+```{r}
+StatePopulation <- read.csv("https://raw.githubusercontent.com/ds4stats/r-tutorials/master/intro-maps/data/StatePopulation.csv", as.is = TRUE)
+
+MergedStates <- inner_join(covid_prison_cases_state_map, StatePopulation, by = "region")
+```
+
+```{r}
+ggplot(data = MergedStates,
+            aes(x = long, y = lat,
+                group = group, fill = n/population))+
+  geom_polygon(color = "gray90", size = 0.1) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.x = element_blank()) +
+  labs(title="Prisoner covid cases per capita") +
+  theme(legend.title=element_blank())+
+  coord_map()+
+    scale_fill_viridis_c(option = "A")
+```
+
+```{r  fig.height=5, warning=FALSE}
+covid_prison = covid_prison_cases %>%
+  mutate(Month = month(mdy(as_of_date))) %>%
+  mutate(Month = month.abb[Month]) %>%
+  mutate(Year = year(mdy(as_of_date))) %>%
+  drop_na(Year)%>%
+  drop_na(prisoners_recovered) %>% 
+  group_by(Year,name) %>% 
+  summarise(total_prisoner_cases=sum(total_prisoner_cases),prisoners_recovered=sum(prisoners_recovered),total_prisoner_deaths=sum(total_prisoner_deaths))
+
+ggplot(covid_prison)+
+  geom_bar(aes(name,total_prisoner_cases,fill=total_prisoner_cases),stat="identity")+
+  coord_flip()+
+  scale_fill_viridis_c(option = "A")+
+  xlab("Total Covid cases in Prison ")+
+  ylab("State")+
+  theme_classic()+
+ theme(legend.position = "bottom",text = element_text(size = 7))
+
+```
+
+```{r fig.height=5}
+ggplot(covid_prison)+
+  geom_bar(aes(name,prisoners_recovered,fill=prisoners_recovered),stat="identity")+
+  coord_flip()+
+  scale_fill_viridis_c(option = "A")+
+  xlab("Total Prisoners Recovered")+
+  ylab("State")+
+  theme_classic()+
+  theme(legend.position = "bottom",text = element_text(size = 8))
+```
+
+```{r fig.height = 6, warning=FALSE}
+ggplot(covid_prison)+
+  geom_bar(aes(name,total_prisoner_deaths,fill=total_prisoner_deaths),stat="identity")+
+  coord_flip()+
+  scale_fill_viridis_c(option = "A")+
+  xlab("Total Prisoner Death")+
+  ylab("State")+
+ theme_classic()+
+  theme(legend.position = "bottom")
+```
+
+
+
+
+
+```{r}
+pi = covid_prison_cases%>%
+  summarise(partial = sum(prisoners_partial_dose, na.rm = TRUE),
+            full = sum(prisoners_full_dose, na.rm = TRUE))
+pi2 = prison_pop %>%
+  summarise(total = sum(prisoner_pop))
+
+x = pi2$total - (pi$partial + pi$full)
+
+slices = c(pi$partial, pi$full, x)
+lbls = c("partial", "full", "unvaccinated/unknown")
+pie(slices, labels = lbls, main="Vaccination status of Prisoners as of Mar 2021")
+
+```
+
+
+
+
+
+
+
+
